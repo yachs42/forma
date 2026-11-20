@@ -259,6 +259,7 @@ body{background:#0b0f15}
         <button class="btn primary" id="freecadBtn" title="Скачать настоящий файл проекта FreeCAD напрямую">FreeCAD .FCStd <span aria-hidden="true">↓</span></button>
         <button class="btn light export-more" id="exportMore" title="Другие форматы экспорта" aria-label="Выбрать формат экспорта" aria-expanded="false">▾</button>
         <div class="export-menu" id="exportMenu" hidden>
+          <button data-export="step"><b>STEP · твёрдая 3D-модель</b><small>Рекомендуется для FreeCAD на РЕД ОС</small></button>
           <button data-export="obj"><b>OBJ · 3D-модель</b><small>Открыть прямо в FreeCAD</small></button>
           <button data-export="stl"><b>STL · 3D-модель</b><small>Альтернативный формат сетки</small></button>
           <button data-export="macro"><b>FCMacro · CAD-объекты</b><small>Редактируемые стены и плиты через макрос</small></button>
@@ -489,7 +490,7 @@ if (!window.FormaPhysics) {
 // to load, so the page can still start from one HTML file.
 if (!window.__FORMA_APP_STARTED) {
   try {
-/* FORMA Studio v8.2 — ALL APPLICATION CODE IN ONE FILE.
+/* FORMA Studio v8 — ALL APPLICATION CODE IN ONE FILE.
  * No build step, package manager, Python, CDN or server is required.
  * ENGINEERING: edit/replace physics.js ONLY; app.js stays unchanged.
  * ARCHITECTURE: self-contained modules wrapped in a local JS loader.
@@ -663,7 +664,7 @@ const {getRecommendations} = __require('src/tips.js');
 const {mount3D} = __require('src/renderer3d.js');
 const {roomFurniture, interiorStyles} = __require('src/interior/layout.js');
 const {createFreeCADMacro, createOBJ, createSTLBlob, downloadText, downloadBlob} = __require('src/freecad.js');
-const {createFCStd} = __require('src/freecadNative.js');
+const {createFCStd,createSTEP} = __require('src/freecadNative.js');
 const $=id=>document.getElementById(id);
 const ESC=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const nfmt=(n,d=1)=>Number(n).toLocaleString('ru-RU',{maximumFractionDigits:d});
@@ -1159,7 +1160,7 @@ async function exportFCStd(){
     // per-object genuine OpenCASCADE BREP shapes, generated without a server.
     const blob=createFCStd(project);
     downloadBlob(blob,safeName(project.name)+'.FCStd');
-    toast('Файл .FCStd скачан · открой его в FreeCAD');
+    toast('FCStd (экспериментальный) скачан. Если FreeCAD не откроет его — используй STEP из меню ▾');
   }catch(err){
     console.error('FORMA FCStd:',err);
     toast('Ошибка создания .FCStd: '+(err.message||'Неизвестная ошибка'));
@@ -1168,7 +1169,10 @@ async function exportFCStd(){
 function exportProject(format='obj'){
   if(!project.rooms.length){toast('Сначала добавь комнаты');return;}
   const name=safeName(project.name);
-  if(format==='obj'){
+  if(format==='step'){
+    downloadText(createSTEP(project),name+'.step','model/step');
+    toast('STEP · твёрдые 3D-объекты · FreeCAD → Файл → Открыть');
+  }else if(format==='obj'){
     downloadText(createOBJ(project),name+'.obj','text/plain;charset=utf-8');
     toast('Готово: файл .OBJ · FreeCAD → Файл → Открыть');
   }else if(format==='stl'){
@@ -1338,22 +1342,30 @@ function detailedSolids(p){
 }
 function packColor(hex){const n=parseInt(hex.replace('#',''),16);return (((n<<8)>>>0)|255)>>>0;}
 function buildDocument(project,solids){
-  const fileProps={Comment:'FORMA Studio · учебный архитектурный проект',Company:'',CreatedBy:'FORMA Studio',CreationDate:new Date().toUTCString(),FileName:'',Id:'',Label:String(project.name||'FORMA Studio'),LastModifiedBy:'FORMA Studio',LastModifiedDate:new Date().toUTCString()};
+  // FreeCAD official Part::Box Document.xml schema: exact built-in properties,
+  // in alphabetical order, without invented Object id / FileVersion fields.
+  const now=new Date().toUTCString();
+  const fileProps={Comment:'FORMA Studio | учебная модель, не для строительства',Company:'',CreatedBy:'FORMA Studio',CreationDate:now,FileName:'',Id:'',Label:String(project.name||'FORMA Studio'),LastModifiedBy:'FORMA Studio',LastModifiedDate:now};
   const boxes=solids.map((s,i)=>{
     const id=`Element${String(i+1).padStart(4,'0')}`;
     const shape=id+'.Shape.brp';
     const val=v=>formatNumber(v*1000);
     const q=s.rotation||[0,0,0,1];
-    const dims=[['Height',s.h],['Length',s.w],['Width',s.d]].map(([k,v])=>`<Property name="${k}" type="App::PropertyLength"><Float value="${val(v)}"/></Property>`).join('');
+    const prop=(n,v)=>`<Property name="${n}" type="App::PropertyLength"><Float value="${val(v)}"/></Property>`;
     const label=`${s.group} / ${s.name||s.kind} ${i+1}`;
-    const props=`${dims}${metaProperty('Label',label)}<Property name="Placement" type="App::PropertyPlacement"><PropertyPlacement Px="${val(s.x)}" Py="${val(s.y)}" Pz="${val(s.z)}" Q0="${formatNumber(q[0])}" Q1="${formatNumber(q[1])}" Q2="${formatNumber(q[2])}" Q3="${formatNumber(q[3])}"/></Property><Property name="Pos" type="App::PropertyPlacementLink"><Link value=""/></Property><Property name="Shape" type="Part::PropertyPartShape"><Part file="${shape}"/></Property>`;
+    const props=prop('Height',s.h)+metaProperty('Label',label)+prop('Length',s.w)+
+      `<Property name="Placement" type="App::PropertyPlacement"><PropertyPlacement Px="${val(s.x)}" Py="${val(s.y)}" Pz="${val(s.z)}" Q0="${formatNumber(q[0])}" Q1="${formatNumber(q[1])}" Q2="${formatNumber(q[2])}" Q3="${formatNumber(q[3])}"/></Property>`+
+      `<Property name="Pos" type="App::PropertyPlacementLink"><Link value=""/></Property>`+
+      `<Property name="Shape" type="Part::PropertyPartShape"><Part file="${shape}"/></Property>`+prop('Width',s.d);
     return {id,shape,color:s.color||PALETTE.wall,kind:s.kind,xml:`<Object name="${id}"><Properties Count="7">${props}</Properties></Object>`,brep:boxBrep(s.w*1000,s.d*1000,s.h*1000)};
   });
-  return {boxes, doc:`<?xml version="1.0" encoding="utf-8"?><Document SchemaVersion="4" FileVersion="1"><Properties Count="9">${Object.entries(fileProps).map(([k,v])=>metaProperty(k,v)).join('')}</Properties><Objects Count="${boxes.length}">${boxes.map((b,i)=>`<Object type="Part::Box" name="${b.id}" id="${i+1}"/>`).join('')}</Objects><ObjectData Count="${boxes.length}">${boxes.map(b=>b.xml).join('')}</ObjectData></Document>`};
+  return {boxes,doc:`<?xml version="1.0" encoding="utf-8"?><Document SchemaVersion="4"><Properties Count="9">${Object.entries(fileProps).map(([k,v])=>metaProperty(k,v)).join('')}</Properties><Objects Count="${boxes.length}">${boxes.map(b=>`<Object type="Part::Box" name="${b.id}"/>`).join('')}</Objects><ObjectData Count="${boxes.length}">${boxes.map(b=>b.xml).join('')}</ObjectData></Document>`};
 }
 function buildGuiDocument(boxes){
-  const entries=boxes.map(b=>`<ViewProvider name="${b.id}" expanded="0" treeRank="0"><Properties Count="3"><Property name="Visibility" type="App::PropertyBool"><Bool value="true"/></Property><Property name="ShapeColor" type="App::PropertyColor"><PropertyColor value="${packColor(b.color)}"/></Property><Property name="LineColor" type="App::PropertyColor"><PropertyColor value="${packColor('#34404c')}"/></Property></Properties></ViewProvider>`);
-  return `<?xml version="1.0" encoding="utf-8"?><Document SchemaVersion="1"><ViewProviderData Count="${boxes.length}">${entries.join('')}</ViewProviderData><Camera settings=""/></Document>`;
+  // GUI properties were causing FreeCAD to reject manually authored FCStd files
+  // on some Linux builds. Do not invent Part view-provider properties here.
+  // FreeCAD will initialize default view providers for document objects.
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<Document SchemaVersion="1"><ViewProviderData Count="0"></ViewProviderData></Document>`;
 }
 function crc32(bytes){let crc=-1;for(const byte of bytes){crc^=byte;for(let j=0;j<8;j++)crc=crc&1?(crc>>>1)^0xedb88320:crc>>>1;}return (crc^-1)>>>0;}
 function zipStore(entries){
@@ -1386,7 +1398,70 @@ function createFCStd(project){
   return zipStore([['Document.xml',doc],['GuiDocument.xml',buildGuiDocument(boxes)],...boxes.map(b=>[b.shape,b.brep])]);
 }
 
+
+function createSTEP(project){
+  // Valid AP214 faceted BREP. Unlike OBJ this carries CLOSED_SHELL solid
+  // geometry, importable through FreeCAD's standard STEP importer on Linux.
+  const solids=detailedSolids(project).filter(s=>[s.x,s.y,s.z,s.w,s.d,s.h].every(Number.isFinite)&&s.w>.001&&s.d>.001&&s.h>.001);
+  if(!solids.length)throw new Error('Сначала добавь комнаты');
+  if(solids.length>400)throw new Error('Слишком много объектов для STEP-экспорта');
+  const data=[];
+  const add=x=>{data.push('='+x+';');return data.length};
+  const set=(n,x)=>{data[n-1]='='+x+';'};
+  const link=ids=>ids.map(i=>'#'+i).join(',');
+  const num=v=>Math.abs(v)<1e-9?'0.':Number(v.toFixed(6)).toString().includes('.')?Number(v.toFixed(6)).toString():Number(v.toFixed(6)).toString()+'.';
+  const point=coords=>add(`CARTESIAN_POINT('',(${coords.map(num).join(',')}))`);
+  const direction=coords=>add(`DIRECTION('',(${coords.map(num).join(',')}))`);
+  const sub=(a,b)=>a.map((v,i)=>v-b[i]);
+  const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+  const unit=a=>{const m=Math.hypot(...a)||1;return a.map(v=>v/m)};
+  const app=add("APPLICATION_CONTEXT('mechanical design')");
+  add(`APPLICATION_PROTOCOL_DEFINITION('international standard','automotive_design',2000,#${app})`);
+  const context=add(`PRODUCT_CONTEXT('',#${app},'mechanical')`);
+  const product=add(`PRODUCT('FORMA Studio','FORMA Studio house','',(#${context}))`);
+  const formation=add(`PRODUCT_DEFINITION_FORMATION('1','',#${product})`);
+  const definition=add(`PRODUCT_DEFINITION_CONTEXT('part definition',#${app},'design')`);
+  const prodDef=add(`PRODUCT_DEFINITION('design','',#${formation},#${definition})`);
+  const prodShape=add(`PRODUCT_DEFINITION_SHAPE('','',#${prodDef})`);
+  const rep=add("FACETED_BREP_SHAPE_REPRESENTATION('',(#0),#0)");
+  add(`SHAPE_DEFINITION_REPRESENTATION(#${prodShape},#${rep})`);
+  const unitContext=add('(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT((#0,#0,#0)) REPRESENTATION_CONTEXT(\'Context\',\'3D\'))');
+  const mm=add('(LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.))');
+  const rad=add('(NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.))');
+  const ster=add('(NAMED_UNIT(*) SOLID_ANGLE_UNIT() SI_UNIT($,.STERADIAN.))');
+  set(unitContext,`(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT((${link([mm,rad,ster])})) REPRESENTATION_CONTEXT('Context','3D'))`);
+  const breps=[];
+  for(const solid of solids){
+    const [x,y,z,w,d,h]=[solid.x,solid.y,solid.z,solid.w,solid.d,solid.h].map(v=>v*1000);
+    let c=[[0,0,0],[w,0,0],[w,d,0],[0,d,0],[0,0,h],[w,0,h],[w,d,h],[0,d,h]];
+    const [qx,qy,qz,qw]=solid.rotation||[0,0,0,1];
+    c=c.map(p=>{
+      const t=cross([qx,qy,qz],p).map(v=>2*v);
+      const rotated=p.map((v,i)=>v+qw*t[i]+cross([qx,qy,qz],t)[i]);
+      return [rotated[0]+x,rotated[1]+y,rotated[2]+z];
+    });
+    const pts=c.map(point);
+    const fs=[];
+    for(const corners of [[0,3,2,1],[4,5,6,7],[0,1,5,4],[1,2,6,5],[2,3,7,6],[3,0,4,7]]){
+      const a=c[corners[0]],b=c[corners[1]],cc=c[corners[2]];
+      const normal=direction(unit(cross(sub(b,a),sub(cc,a))));
+      const tangent=direction(unit(sub(b,a)));
+      const ax=add(`AXIS2_PLACEMENT_3D('',#${pts[corners[0]]},#${normal},#${tangent})`);
+      const plane=add(`PLANE('',#${ax})`);
+      const loop=add(`POLY_LOOP('',(${link(corners.map(j=>pts[j]))}))`);
+      const bound=add(`FACE_OUTER_BOUND('',#${loop},.T.)`);
+      fs.push(add(`FACE_SURFACE('',(#${bound}),#${plane},.T.)`));
+    }
+    const shell=add(`CLOSED_SHELL('',(${link(fs)}))`);
+    breps.push(add(`FACETED_BREP('${xml(solid.name||solid.kind).replace(/'/g,'')} ',#${shell})`));
+  }
+  set(rep,`FACETED_BREP_SHAPE_REPRESENTATION('FORMA Studio',(${link(breps)}),#${unitContext})`);
+  const header="ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('FORMA Studio architectural solid model'),'2;1');\nFILE_NAME('FORMA Studio', '2026-11-20T00:00:00', ('FORMA Studio'), ('FORMA Studio'), 'Browser exporter', '', '');\nFILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\nENDSEC;\nDATA;\n";
+  return header+data.map((v,i)=>'#'+(i+1)+v).join('\n')+'\nENDSEC;\nEND-ISO-10303-21;\n';
+}
+
 exports.createFCStd = createFCStd;
+exports.createSTEP = createSTEP;
 };
 
 __modules['src/character3d.js']=function(exports,__require){
